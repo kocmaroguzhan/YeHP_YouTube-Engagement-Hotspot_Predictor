@@ -4,7 +4,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 
 video_urls = [
-    "https://www.youtube.com/watch?v=pZz3tfXEFmU&ab_channel=Vox"
+    "https://www.youtube.com/watch?v=hTSaweR8qMI&ab_channel=MrBeast"
 ]
 
 def process_video(url):
