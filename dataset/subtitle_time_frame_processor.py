@@ -1,19 +1,32 @@
 import os
 import re
+import json
+import hashlib
+import inspect
 import pandas as pd
 import spacy
-import json
+
 nlp = spacy.load("en_core_web_sm")
 
+# --- 🔐 Hash-Based Logic for Function Change Tracking ---
+
+# Hashing is used to automatically detect changes in the `clean_line()` function.
+# If the logic of `clean_line()` is modified (e.g., regex rules are added or changed),
+# we want to reprocess the subtitles even if the output CSV already exists.
+# This eliminates the need to manually update a version string.
+# We compute an MD5 hash of the function's source code and store it in a text file.
+# On future runs, the stored hash is compared with the current one.
+# If they differ, the script knows the function logic changed and reprocesses the file. 
+def get_clean_subtitle_line_hash():
+    source = inspect.getsource(clean_subtitle_line)
+    return hashlib.md5(source.encode('utf-8')).hexdigest()
 
 
-
-def clean_line(text):
+def clean_subtitle_line(text):
     # Remove lines that start with specific unwanted labels 
     #This is added for TEDex talks spesifically
     if re.match(r'^\s*(Transcriber|Reviewer)\s*:\s*', text, re.IGNORECASE):
         return ''  # Skip line entirely
-
     text = re.sub(r'<\d{2}:\d{2}:\d{2}\.\d{3}><c>', '', text)  # Remove <timestamp><c> tags
     text = re.sub(r'</c>', '', text)                          # Remove </c> closing tags
     text = re.sub(r'^-+\s*', '', text)                        # Remove leading dashes
@@ -45,7 +58,7 @@ def process_manual_written_vtt_file(filepath):
             collecting = True
             if buffer and start_time is not None:
                 sentence = ' '.join(buffer).strip()
-                sentence = clean_line(sentence)
+                sentence = clean_subtitle_line(sentence)
                 if sentence:
                     entries.append((start_time, end_time, sentence))
                 buffer = []
@@ -59,7 +72,7 @@ def process_manual_written_vtt_file(filepath):
 
     if collecting and buffer and start_time is not None:
         sentence = ' '.join(buffer).strip()
-        sentence = clean_line(sentence)
+        sentence = clean_subtitle_line(sentence)
         if sentence:
             entries.append((start_time, end_time, sentence))
 
@@ -80,7 +93,7 @@ def process_auto_generated_vtt_file(filepath):
             collecting = True
             if buffer and start_time is not None:
                 sentence = ' '.join(buffer).strip()
-                sentence = clean_line(sentence)
+                sentence = clean_subtitle_line(sentence)
                 if sentence:
                     entries.append((start_time, end_time, sentence))
                 buffer = []
@@ -95,7 +108,7 @@ def process_auto_generated_vtt_file(filepath):
 
     if collecting and buffer and start_time is not None:
         sentence = ' '.join(buffer).strip()
-        sentence = clean_line(sentence)
+        sentence = clean_subtitle_line(sentence)
         if sentence:
             entries.append((start_time, end_time, sentence))
 
@@ -140,6 +153,8 @@ def segment_subtitle_time_frames(df, time_frame_increment=10):
                 current_time = line_start
 
                 for token, is_punct in zip(tokens, is_punct_flags):
+                    token_start = current_time
+                    token_end=current_time
                     ##Only add the punct is we are still in certain time frame
                     if is_punct and token_end<=frame_end:
                         window_words.append(token)  # Directly add punctuation
@@ -147,7 +162,7 @@ def segment_subtitle_time_frames(df, time_frame_increment=10):
 
                     # Interpolate time for non-punctuation tokens
                     token_duration = duration * (len(token) / total_chars)
-                    token_start = current_time
+                    
                     token_end = token_start + token_duration
 
                     if frame_start <= token_start and frame_end >= token_end:
@@ -168,7 +183,13 @@ def segment_subtitle_time_frames(df, time_frame_increment=10):
             
 def main(time_frame_increment):
     root_folder = os.path.dirname(os.path.abspath(__file__))
-    # Iterate through all subdirectories inside the root folder
+    clean_subtitle_line_hash = get_clean_subtitle_line_hash()
+    hash_path = os.path.join(root_folder, "clean_subtitle_line_function_hash.txt")
+    stored_hash=""
+    if os.path.exists(hash_path):
+        with open(hash_path, "r") as f:
+            stored_hash = f.read().strip()
+        
     for subfolder in os.listdir(root_folder):
         subfolder_path = os.path.join(root_folder, subfolder)
 
@@ -192,31 +213,48 @@ def main(time_frame_increment):
                             break  # No need to continue
 
             for file in os.listdir(subfolder_path):
-                if file.endswith(".vtt") and "en" in file:  # Optional: restrict to English VTTs
+                if file.endswith(".vtt") and "en" in file:
                     vtt_path = os.path.join(subfolder_path, file)
                     break
 
             if subtitle_type == "none" or not vtt_path:
                 continue
 
+            # Define output folder and file
+            output_subfolder = os.path.join(subfolder_path, f"time_frame_increment_{time_frame_increment}")
+            os.makedirs(output_subfolder, exist_ok=True)
+            output_filename = os.path.basename(vtt_path).replace(".vtt", "_time_frame_segmented_words.csv")
+            output_path = os.path.join(output_subfolder, output_filename)
+            
+            # Skip if already processed
+            if os.path.exists(output_path) and (stored_hash == clean_subtitle_line_hash):
+                print(f"Skipped: {output_path} already exists and hash matches")
+                continue
+
+            # Process subtitle file
             if subtitle_type == "auto":
                 df = process_auto_generated_vtt_file(vtt_path)
             elif subtitle_type == "manual":
                 df = process_manual_written_vtt_file(vtt_path)
 
-            # Save cleaned subtitles
-            output_csv_path = os.path.join(subfolder_path, os.path.basename(vtt_path).replace(".vtt", "_cleaned.csv"))
-            df.to_csv(output_csv_path, index=False)
-            print(f"Processed and saved cleaned subtitle: {output_csv_path}")
+            # Save cleaned subtitle CSV (optional - stays in main folder)
+            cleaned_csv_path = os.path.join(subfolder_path, os.path.basename(vtt_path).replace(".vtt", "_cleaned.csv"))
+            df.to_csv(cleaned_csv_path, index=False)
+            print(f"Processed and saved cleaned subtitle: {cleaned_csv_path}")
 
-            # Drop empty lines and convert time columns
+            # Clean text and format timestamps
             df.dropna(subset=['text'], inplace=True)
             df = df[df['text'].str.strip().astype(bool)]
             df['start_time'] = df['start_time'].astype(float)
             df['end_time'] = df['end_time'].astype(float)
 
-            # Segment and save word-level time frames
+            # Segment words and save inside subfolder
             segmented_df = segment_subtitle_time_frames(df, time_frame_increment=time_frame_increment)
-            output_path = os.path.join(subfolder_path, os.path.basename(vtt_path).replace(".vtt", "_time_frame_segmented_words.csv"))
             segmented_df.to_csv(output_path, index=False)
-            print(f"Processed and saved: {output_path}")
+            print(f"Processed and saved segmented words: {output_path}")
+    if stored_hash != clean_subtitle_line_hash:
+        with open(hash_path, "w") as f:
+            f.write(clean_subtitle_line_hash)
+        print(f"Updated clean_subtitle_line hash saved: {hash_path}")
+    else:
+        print("No changes in clean_subtitle_line — hash already up to date.")

@@ -1,5 +1,2 @@
--Time frame duration kaydedilen dosyanın adına yazılabilir bu sayede daha önceden yapılmışsa
-tekrar yapılması engellenebilir.
--Benzer şekilde contenxt window sayısı dosya ismine yazılır ve daha önceden yapılmışsa 
-tekrar yapılması engellenebilir.
--Contenxt window için aynı şey label dosyasına da yapılmalı.
+-Modelin doğruluğu çok düşük dataset genişletilecek 
+-Time frame süresi,context word sayısı,seçilen feature extractor ve modelin hyperparametreleri ile oynanacak.

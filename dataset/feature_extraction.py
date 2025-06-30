@@ -57,25 +57,35 @@ def get_bert_features(texts, tokenizer, model):
 
     return cls, mean
 
-def main():
+def main(time_frame_increment):
     root_folder = os.path.dirname(os.path.abspath(__file__))
 
     for subfolder in tqdm(os.listdir(root_folder), desc="Processing folders"):
         subfolder_path = os.path.join(root_folder, subfolder)
         if not os.path.isdir(subfolder_path):
             continue
+        time_frame_subfolder = os.path.join(subfolder_path, f"time_frame_increment_{time_frame_increment}")
+        if not os.path.isdir(time_frame_subfolder):
+            print(f"⚠️ Missing time_frame_increment_{time_frame_increment} folder in {subfolder}, skipping...")
+            continue
 
         heatmap_file, words_file = None, None
-        for file in os.listdir(subfolder_path):
+        for file in os.listdir(time_frame_subfolder):
             if file.endswith("_averaged_intensity_heatmap.csv"):
-                heatmap_file = os.path.join(subfolder_path, file)
+                heatmap_file = os.path.join(time_frame_subfolder, file)
             elif file.endswith("_time_frame_segmented_words.csv"):
-                words_file = os.path.join(subfolder_path, file)
+                words_file = os.path.join(time_frame_subfolder, file)
 
         if not heatmap_file or not words_file:
             print(f"⚠️ Missing required CSV files in {subfolder}, skipping...")
             continue
 
+        features_file = os.path.basename(words_file).replace(".csv", "_features_vectorlist.csv")
+        csv_path = os.path.join(time_frame_subfolder, features_file)
+         # ✅ Skip if features vector list already exists
+        if os.path.exists(csv_path):
+            print(f"⏩ Skipped: Feature vector file already exists for {subfolder}")
+            continue
         df_heatmap = pd.read_csv(heatmap_file)
         df_words = pd.read_csv(words_file)
 
@@ -145,6 +155,5 @@ def main():
         for col in ["bert_uncased_cls", "bert_uncased_mean", "bert_cased_cls", "bert_cased_mean", "sbert"]:
             df_final[col] = df_final[col].apply(lambda x: str(x.tolist()) if isinstance(x, np.ndarray) else str(list(x)))
 
-        csv_path = os.path.join(subfolder_path, os.path.basename(words_file).replace(".csv", "_features_vectorlist.csv"))
         df_final.to_csv(csv_path, index=False, encoding="utf-8")
-        print(f"✅ Saved CSV: {csv_path}")
+        print(f"✅ Saved Feature Vector List CSV: {csv_path}")
